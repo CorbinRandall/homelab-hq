@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1a1d24">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Homelab HQ">
+  <link rel="manifest" href="/manifest.json">
+  <title>Homelab HQ</title>
+  <link rel="stylesheet" href="/style.css?v=layout14">
+</head>
+<body>
+  <header>
+    <div>
+      <h1 id="siteTitle">Homelab HQ</h1>
+      <p class="sub" id="subline">Loading…</p>
+    </div>
+    <div class="header-links" id="headerLinks"></div>
+  </header>
+
+  <section class="control">
+    <div class="control-status">
+      <span id="dot" class="dot off"></span>
+      <span id="statusText">Unraid: …</span>
+      <span class="control-label" id="hostLabel"></span>
+    </div>
+    <div class="control-buttons">
+      <button id="wakeBtn" class="ctl-btn ctl-wake" type="button">Turn on</button>
+      <button id="startArrayBtn" class="ctl-btn ctl-start" type="button">Start Array</button>
+      <button id="sleepBtn" class="ctl-btn ctl-sleep" type="button">Sleep</button>
+      <button id="shutdownBtn" class="ctl-btn ctl-sleep" type="button">Shutdown</button>
+      <button id="refreshBtn" class="ctl-btn ctl-refresh" type="button">Refresh apps</button>
+    </div>
+    <div id="arrayProgress" class="array-progress" data-state="idle" role="status" aria-live="polite">
+      <span id="arrayProgressDot" class="progress-dot"></span>
+      <span><strong id="arrayProgressTitle">Array: checking…</strong><span id="arrayProgressDetail" class="array-progress-detail"></span></span>
+    </div>
+  </section>
+
+
+  <section class="control plug-section" id="plugSection">
+    <div class="control-status">
+      <span id="plugDot" class="dot off"></span>
+      <span id="plugStatusText">Shelly plug: …</span>
+    </div>
+    <div class="control-buttons">
+      <button id="plugOnBtn" class="ctl-btn ctl-wake" type="button">Plug on</button>
+      <button id="plugOffBtn" class="ctl-btn ctl-sleep" type="button">Plug off</button>
+      <button id="plugCycleBtn" class="ctl-btn ctl-cycle" type="button">Cycle power</button>
+    </div>
+  </section>
+
+  <section class="wake-section" id="wakeSection">
+    <div class="section-head">
+      <div>
+        <h2>Scheduled power</h2>
+        <p class="section-sub" id="wakeTz">Times in …</p>
+      </div>
+      <div class="schedule-add-actions">
+        <button type="button" id="addWakeBtn" class="btn-add btn-add-wake" title="Schedule Turn on">+ Turn on</button>
+        <button type="button" id="addSleepBtn" class="btn-add btn-add-sleep" title="Schedule Sleep">+ Sleep</button>
+        <button type="button" id="addShutdownBtn" class="btn-add btn-add-shutdown" title="Schedule Shutdown">+ Shutdown</button>
+      </div>
+    </div>
+    <div id="wakeList" class="wake-list"></div>
+    <p class="wake-empty empty" id="wakeEmpty" hidden>No schedules yet — add Turn on, Sleep, or Shutdown above.</p>
+  </section>
+
+  <div class="grid" id="grid"></div>
+  <section class="hidden-section" id="hiddenSection" hidden>
+    <h2>Hidden apps</h2>
+    <div class="hidden-list" id="hiddenList"></div>
+  </section>
+  <footer id="footer"></footer>
+  <div id="toast" class="toast"></div>
+
+  <dialog id="wakeDialog" class="wake-dialog">
+    <form id="wakeForm" method="dialog">
+      <h3 id="wakeDialogTitle">Add turn on schedule</h3>
+      <label class="field">
+        <span class="field-label">Label <span class="optional">(optional)</span></span>
+        <input type="text" id="wakeLabel" maxlength="80" placeholder="e.g. Weekday morning">
+      </label>
+      <label class="field">
+        <span class="field-label">Action</span>
+        <select id="wakeAction"><option value="wake">Turn on</option><option value="sleep">Sleep</option><option value="shutdown">Shutdown</option></select>
+      </label>
+      <label class="field">
+        <span class="field-label">Time</span>
+        <input type="time" id="wakeTime" required>
+      </label>
+      <fieldset class="field">
+        <legend class="field-label">Days</legend>
+        <div class="day-presets">
+          <button type="button" class="preset-btn" data-preset="everyday">Every day</button>
+          <button type="button" class="preset-btn" data-preset="weekdays">Weekdays</button>
+          <button type="button" class="preset-btn" data-preset="weekends">Weekends</button>
+        </div>
+        <div class="day-grid" id="wakeDayGrid"></div>
+      </fieldset>
+      <label class="field field-check">
+        <input type="checkbox" id="wakeEnabled" checked>
+        <span>Enabled</span>
+      </label>
+      <div class="dialog-actions">
+        <button type="button" class="ctl-btn ctl-sleep" id="wakeCancelBtn">Cancel</button>
+        <button type="submit" class="ctl-btn ctl-wake" id="wakeSaveBtn">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/app.js?v=power18"></script>
+  <script src="/wake-schedules.js?v=layout13"></script>
+</body>
+</html>

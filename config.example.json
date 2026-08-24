@@ -1,0 +1,27 @@
+{
+  "site_name": "Homelab HQ",
+  "listen": ":8888",
+  "data_dir": "/data",
+  "static_dir": "/app/www",
+  "timezone": "America/Los_Angeles",
+  "unraid_ip": "192.0.2.10",
+  "unraid_url": "http://unraid.local/Main",
+  "unraid_mac": "02:00:00:00:00:01",
+  "unraid_broadcast": "192.0.2.255",
+  "unraid_wol_port": 9,
+  "unraid_probe_timeout_ms": 2500,
+  "app_hostname": "unraid.local",
+  "ssh_target": "root@192.0.2.10",
+  "ssh_opts": "-i /config/keys/unraid_ed25519 -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new",
+  "sleep_cmd": "",
+  "shutdown_cmd": "",
+  "array_start_cmd": "/usr/local/emhttp/plugins/dynamix/scripts/emcmd 'startState=STOPPED&cmdStart=Start'",
+  "shelly_host": "",
+  "shelly_mac": "",
+  "header_links": [
+    {
+      "label": "Router",
+      "url": "https://router.example.test/"
+    }
+  ]
+}

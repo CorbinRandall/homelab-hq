@@ -1,0 +1,10 @@
+{
+  "name": "Homelab HQ",
+  "short_name": "Homelab HQ",
+  "description": "Homelab app links, wake and sleep Unraid",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1d24",
+  "theme_color": "#1a1d24",
+  "orientation": "any"
+}

@@ -1,0 +1,21 @@
+[Unit]
+Description=Homelab HQ for Unraid
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=homelab-hq
+Group=homelab-hq
+WorkingDirectory=/opt/homelab-hq
+ExecStart=/opt/homelab-hq/homelab-hq -config /etc/homelab-hq/config.json
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/homelab-hq
+
+[Install]
+WantedBy=multi-user.target

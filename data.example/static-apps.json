@@ -1,0 +1,10 @@
+[
+  {
+    "name": "Example service",
+    "raw_name": "example-service",
+    "status": "running",
+    "image": "example/image:latest",
+    "url": "http://service.example.test/",
+    "urls": ["http://service.example.test/"]
+  }
+]
