@@ -15,7 +15,7 @@ id homelab-hq >/dev/null 2>&1 || useradd --system --gid homelab-hq --home-dir "$
 install -d -o homelab-hq -g homelab-hq -m 0750 "$data_dir"
 
 (cd "$repo_dir" && go test ./...)
-(cd "$repo_dir" && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o homelab-hq .)
+(cd "$repo_dir" && CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags="-s -w" -o homelab-hq .)
 install -m 0755 "$repo_dir/homelab-hq" /opt/homelab-hq/homelab-hq
 install -m 0644 "$repo_dir/systemd/homelab-hq.service" /etc/systemd/system/homelab-hq.service
 chown -R homelab-hq:homelab-hq "$data_dir"
