@@ -3,6 +3,7 @@ WORKDIR /src
 COPY go.mod ./
 RUN go mod download
 COPY *.go ./
+COPY www/ ./www/
 RUN CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags="-s -w" -o /out/homelab-hq .
 
 FROM alpine:3.22
