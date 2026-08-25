@@ -102,16 +102,49 @@ func (s *Server) afterPowerAction(action, reason string) {
 
 	workflowReason := action + ":" + reason
 	s.setArrayWorkflow("sending_"+action, "Sending the "+action+" command to Unraid", workflowReason, 1, false)
-	var err error
-	if action == "shutdown" {
-		err = s.shutdownUnraid()
-	} else {
-		err = s.sleepUnraid()
+	// SSH commonly remains attached while Unraid finishes stopping services.
+	// Run command delivery concurrently so progress is driven by the server's
+	// actual availability rather than by how quickly SSH notices the disconnect.
+	commandDone := make(chan error, 1)
+	go func() {
+		if action == "shutdown" {
+			commandDone <- s.shutdownUnraid()
+			return
+		}
+		commandDone <- s.sleepUnraid()
+	}()
+	commandWait := time.NewTimer(10 * time.Second)
+	commandPoll := time.NewTicker(time.Second)
+	commandFinished := false
+waitForCommand:
+	for {
+		select {
+		case err := <-commandDone:
+			commandFinished = true
+			if err != nil && s.probeUnraid() {
+				s.setArrayWorkflow("failed", "The "+action+" command failed: "+err.Error(), workflowReason, 1, true)
+				log.Printf("%s command failed: %v", action, err)
+				commandWait.Stop()
+				commandPoll.Stop()
+				return
+			}
+			break waitForCommand
+		case <-commandPoll.C:
+			if !s.probeUnraid() {
+				s.setArrayWorkflow("succeeded", "Server is offline; "+action+" completed", workflowReason, 1, true)
+				s.refreshAfterPowerAction(action)
+				commandWait.Stop()
+				commandPoll.Stop()
+				return
+			}
+		case <-commandWait.C:
+			break waitForCommand
+		}
 	}
-	if err != nil && s.probeUnraid() {
-		s.setArrayWorkflow("failed", "The "+action+" command failed: "+err.Error(), workflowReason, 1, true)
-		log.Printf("%s command failed: %v", action, err)
-		return
+	commandPoll.Stop()
+	commandWait.Stop()
+	if !commandFinished {
+		log.Printf("%s command is still attached; tracking server availability independently", action)
 	}
 
 	s.setArrayWorkflow("waiting_for_power_off", "Command accepted; waiting for the server to go offline", workflowReason, 1, false)
