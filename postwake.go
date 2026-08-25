@@ -125,7 +125,7 @@ waitForCommand:
 		case err := <-commandDone:
 			commandFinished = true
 			if err != nil && s.probeUnraid() {
-				s.setArrayWorkflow("failed", "The "+action+" command failed: "+err.Error(), workflowReason, 1, true)
+				s.setArrayWorkflow("failed", powerCommandFailure(action, err), workflowReason, 1, true)
 				log.Printf("%s command failed: %v", action, err)
 				commandWait.Stop()
 				commandPoll.Stop()
@@ -164,6 +164,16 @@ waitForCommand:
 		time.Sleep(powerOffPollInterval)
 	}
 	s.setArrayWorkflow("failed", "Server was still online after the 5-minute "+action+" timeout", workflowReason, polls, true)
+}
+
+func powerCommandFailure(action string, err error) string {
+	detail := strings.TrimSpace(err.Error())
+	lower := strings.ToLower(detail)
+	if action == "shutdown" && strings.Contains(lower, "refuse poweroff") &&
+		(strings.Contains(lower, "array operation") || strings.Contains(lower, "parity") || strings.Contains(lower, "check p")) {
+		return "Shutdown blocked for safety: Unraid is running a parity check or another array operation. Let it finish, then try again."
+	}
+	return "The " + action + " command failed: " + detail
 }
 
 func (s *Server) refreshAfterPowerAction(reason string) {

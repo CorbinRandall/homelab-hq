@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -117,5 +118,13 @@ func TestPublicConfigExcludesPrivateFields(t *testing.T) {
 		if _, ok := body[private]; ok {
 			t.Fatalf("public config exposed %s", private)
 		}
+	}
+}
+
+func TestPowerCommandFailureExplainsParitySafetyBlock(t *testing.T) {
+	got := powerCommandFailure("shutdown", fmt.Errorf("REFUSE poweroff: array operation in progress (check P)"))
+	want := "Shutdown blocked for safety: Unraid is running a parity check or another array operation. Let it finish, then try again."
+	if got != want {
+		t.Fatalf("message = %q, want %q", got, want)
 	}
 }

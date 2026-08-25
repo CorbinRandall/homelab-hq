@@ -210,6 +210,9 @@ function applyArrayStatus(j) {
     ? `Server: ${j.online ? (powerAction === 'shutdown' ? 'Shutting down' : 'Going to sleep') : 'Offline'}`
     : `Array: ${j.array_state || 'Unknown'}`;
   let detail = workflow.message || '';
+  if (workflow.state === 'failed' && powerAction === 'shutdown') {
+    title = detail.startsWith('Shutdown blocked') ? 'Server: Shutdown blocked' : 'Server: Shutdown failed';
+  }
   if (!active && !isPowerOffWorkflow) {
     if (j.array_state === 'Started') {
       state = 'succeeded';
