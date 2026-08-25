@@ -1,6 +1,6 @@
 # Homelab HQ
 
-Homelab HQ is a lightweight dashboard for Unraid Docker applications. It discovers running containers over SSH, builds convenient application links, and provides optional Wake-on-LAN, array, sleep, shutdown, schedule, and Shelly smart-plug controls.
+Homelab HQ is a lightweight dashboard for Unraid Docker applications. It discovers running containers over SSH, builds convenient application links, and provides optional Wake-on-LAN, array, sleep, shutdown, schedule, and Shelly smart-plug controls. Its small footprint should suit Raspberry Pi-class hardware, although Raspberry Pi deployment has not been tested.
 
 The application is a single Go binary with a static web interface. It is intended to run on an always-on device such as a small Linux host, VM, or Proxmox LXC. If it runs only on the Unraid machine, it cannot wake that machine after shutdown.
 
@@ -81,7 +81,7 @@ Copy `data.example/static-apps.json` to `static-apps.json` inside the configured
 
 ```bash
 cp config.example.json config.json
-# Set static_dir to "www" and data_dir to a writable local directory.
+# Set data_dir to a writable local directory. Leave static_dir empty to use embedded assets.
 go test ./...
 go run . -config config.json
 ```

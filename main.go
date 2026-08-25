@@ -2,25 +2,32 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"crypto/rand"
+	"embed"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	_ "time/tzdata"
-
-	"github.com/google/uuid"
 )
+
+//go:embed www/*
+var embeddedWeb embed.FS
 
 type Config struct {
 	SiteName            string       `json:"site_name"`
@@ -46,6 +53,10 @@ type Config struct {
 	ShutdownCmd         string       `json:"shutdown_cmd"`
 	ArrayStartCmd       string       `json:"array_start_cmd"`
 	AppHostname         string       `json:"app_hostname"`
+	StatusCacheSeconds  int          `json:"status_cache_seconds"`
+	ArrayCacheSeconds   int          `json:"array_cache_seconds"`
+	ShellyCacheSeconds  int          `json:"shelly_cache_seconds"`
+	SchedulerEnabled    *bool        `json:"scheduler_enabled,omitempty"`
 }
 
 type HeaderLink struct {
@@ -81,6 +92,20 @@ type Server struct {
 	arrayWorkflowMu sync.RWMutex
 	arrayWorkflow   ArrayWorkflowStatus
 	shellyMu        sync.Mutex
+	statusMu        sync.Mutex
+	statusCachedAt  time.Time
+	statusCached    bool
+	arrayCacheMu    sync.Mutex
+	arrayCachedAt   time.Time
+	arrayCached     string
+	shellyCacheMu   sync.Mutex
+	shellyScanMu    sync.Mutex
+	shellyCachedAt  time.Time
+	shellyCached    map[string]any
+	shellyScanAfter time.Time
+	schedulesMu     sync.RWMutex
+	schedules       SchedulesFile
+	probeOverride   func() bool
 }
 
 func main() {
@@ -108,6 +133,9 @@ func main() {
 		},
 		lastFire: map[string]string{},
 	}
+	if err := s.initSchedules(); err != nil {
+		log.Fatalf("schedules: %v", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/unraid/status", s.handleUnraidStatus)
@@ -131,12 +159,42 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.Handle("/data/", http.StripPrefix("/data/", http.FileServer(http.Dir(cfg.DataDir))))
-	mux.Handle("/", http.FileServer(http.Dir(cfg.StaticDir)))
+	var webFS fs.FS
+	if strings.TrimSpace(cfg.StaticDir) != "" {
+		webFS = os.DirFS(cfg.StaticDir)
+	} else {
+		webFS, err = fs.Sub(embeddedWeb, "www")
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	mux.Handle("/", http.FileServer(http.FS(webFS)))
 
-	go s.scheduleLoop()
+	if cfg.SchedulerEnabled == nil || *cfg.SchedulerEnabled {
+		go s.scheduleLoop()
+	}
 
 	log.Printf("homelab-hq listening on %s (unraid=%s shelly=%s primary=%t)", cfg.Listen, cfg.UnraidIP, cfg.ShellyHost, s.isPrimary())
-	log.Fatal(http.ListenAndServe(cfg.Listen, mux))
+	httpServer := &http.Server{
+		Addr:              cfg.Listen,
+		Handler:           http.MaxBytesHandler(mux, 1<<20),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      35 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-stop
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = httpServer.Shutdown(ctx)
+	}()
+	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
 }
 
 func loadConfig(path string) (Config, error) {
@@ -144,7 +202,7 @@ func loadConfig(path string) (Config, error) {
 		SiteName:            "Homelab HQ",
 		Listen:              ":8888",
 		DataDir:             "data",
-		StaticDir:           "www",
+		StaticDir:           "",
 		Timezone:            "UTC",
 		UnraidBroadcast:     "255.255.255.255",
 		UnraidWOLPort:       9,
@@ -154,6 +212,9 @@ func loadConfig(path string) (Config, error) {
 		SSHOpts:             "-o BatchMode=yes -o ConnectTimeout=8",
 		SleepCmd:            "",
 		ArrayStartCmd:       "/usr/local/emhttp/plugins/dynamix/scripts/emcmd cmdStart=Start",
+		StatusCacheSeconds:  5,
+		ArrayCacheSeconds:   10,
+		ShellyCacheSeconds:  10,
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -167,6 +228,15 @@ func loadConfig(path string) (Config, error) {
 	}
 	if cfg.UnraidProbeTimeout == 0 {
 		cfg.UnraidProbeTimeout = 2500
+	}
+	if cfg.StatusCacheSeconds <= 0 {
+		cfg.StatusCacheSeconds = 5
+	}
+	if cfg.ArrayCacheSeconds <= 0 {
+		cfg.ArrayCacheSeconds = 10
+	}
+	if cfg.ShellyCacheSeconds <= 0 {
+		cfg.ShellyCacheSeconds = 10
 	}
 	if strings.TrimSpace(cfg.SiteName) == "" {
 		cfg.SiteName = "Homelab HQ"
@@ -184,7 +254,7 @@ func (s *Server) handlePublicConfig(w http.ResponseWriter, r *http.Request) {
 		"unraid_url":       s.cfg.UnraidURL,
 		"header_links":     s.cfg.HeaderLinks,
 		"unraid_hostname":  s.cfg.AppHostname,
-		"poll_interval_ms": 15000,
+		"poll_interval_ms": 30000,
 	})
 }
 
@@ -195,11 +265,14 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func (s *Server) handleUnraidStatus(w http.ResponseWriter, r *http.Request) {
-	online := s.probeUnraid()
+	online := s.probeUnraidCached(r.URL.Query().Get("force") == "1")
 	writeJSON(w, http.StatusOK, map[string]any{"online": online})
 }
 
 func (s *Server) probeUnraid() bool {
+	if s.probeOverride != nil {
+		return s.probeOverride()
+	}
 	addr := net.JoinHostPort(s.cfg.UnraidIP, "80")
 	conn, err := net.DialTimeout("tcp", addr, time.Duration(s.cfg.UnraidProbeTimeout)*time.Millisecond)
 	if err != nil {
@@ -207,6 +280,27 @@ func (s *Server) probeUnraid() bool {
 	}
 	_ = conn.Close()
 	return true
+}
+
+func (s *Server) probeUnraidCached(force bool) bool {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	if !force && !s.statusCachedAt.IsZero() && time.Since(s.statusCachedAt) < time.Duration(s.cfg.StatusCacheSeconds)*time.Second {
+		return s.statusCached
+	}
+	s.statusCached = s.probeUnraid()
+	s.statusCachedAt = time.Now()
+	return s.statusCached
+}
+
+func newID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
 func (s *Server) handleUnraidWake(w http.ResponseWriter, r *http.Request) {
@@ -218,6 +312,7 @@ func (s *Server) handleUnraidWake(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	s.invalidateStatusCaches()
 	s.afterWake("button")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -279,6 +374,7 @@ func (s *Server) handleUnraidStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	s.invalidateStatusCaches()
 	go s.afterWake("start-array")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -293,6 +389,7 @@ func (s *Server) handleUnraidPower(w http.ResponseWriter, r *http.Request, actio
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	s.invalidateStatusCaches()
 	if !s.isPrimary() && s.cfg.ProxySleepToPrimary && s.cfg.PrimaryHub != "" {
 		req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.cfg.PrimaryHub, "/")+"/unraid/"+action, nil)
 		if err == nil {
@@ -334,10 +431,33 @@ func (s *Server) shellyHost() string {
 }
 
 func (s *Server) refreshShellyHost() string {
+	s.shellyScanMu.Lock()
+	defer s.shellyScanMu.Unlock()
 	mac := strings.ToLower(strings.TrimSpace(s.cfg.ShellyMAC))
 	if mac == "" {
 		return s.shellyHost()
 	}
+
+	findARP := func() string {
+		arp, _ := os.ReadFile("/proc/net/arp")
+		for _, line := range strings.Split(string(arp), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 4 && strings.ToLower(fields[3]) == mac {
+				return fields[0]
+			}
+		}
+		return ""
+	}
+	if host := findARP(); host != "" {
+		s.shellyMu.Lock()
+		s.cfg.ShellyHost = host
+		s.shellyMu.Unlock()
+		return host
+	}
+	if time.Now().Before(s.shellyScanAfter) {
+		return s.shellyHost()
+	}
+	s.shellyScanAfter = time.Now().Add(2 * time.Minute)
 
 	var subnet net.IP
 	ifaces, _ := net.Interfaces()
@@ -359,43 +479,54 @@ func (s *Server) refreshShellyHost() string {
 	}
 	if subnet != nil {
 		var wg sync.WaitGroup
-		sem := make(chan struct{}, 48)
-		for i := 1; i < 255; i++ {
-			ip := fmt.Sprintf("%d.%d.%d.%d", subnet[0], subnet[1], subnet[2], i)
+		jobs := make(chan int)
+		for worker := 0; worker < 12; worker++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				sem <- struct{}{}
-				conn, _ := net.DialTimeout("tcp", net.JoinHostPort(ip, "80"), 250*time.Millisecond)
-				if conn != nil {
-					_ = conn.Close()
+				for i := range jobs {
+					ip := fmt.Sprintf("%d.%d.%d.%d", subnet[0], subnet[1], subnet[2], i)
+					conn, _ := net.DialTimeout("tcp", net.JoinHostPort(ip, "80"), 200*time.Millisecond)
+					if conn != nil {
+						_ = conn.Close()
+					}
 				}
-				<-sem
 			}()
 		}
+		for i := 1; i < 255; i++ {
+			jobs <- i
+		}
+		close(jobs)
 		wg.Wait()
 	}
-
-	arp, _ := os.ReadFile("/proc/net/arp")
-	for _, line := range strings.Split(string(arp), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 4 && strings.ToLower(fields[3]) == mac {
-			s.shellyMu.Lock()
-			s.cfg.ShellyHost = fields[0]
-			s.shellyMu.Unlock()
-			return fields[0]
-		}
+	if host := findARP(); host != "" {
+		s.shellyMu.Lock()
+		s.cfg.ShellyHost = host
+		s.shellyMu.Unlock()
+		return host
 	}
 	return s.shellyHost()
 }
 
 func (s *Server) handlePlugStatus(w http.ResponseWriter, r *http.Request) {
+	s.shellyCacheMu.Lock()
+	defer s.shellyCacheMu.Unlock()
+	if s.shellyCached != nil && time.Since(s.shellyCachedAt) < time.Duration(s.cfg.ShellyCacheSeconds)*time.Second {
+		writeJSON(w, http.StatusOK, s.shellyCached)
+		return
+	}
+	result := s.readPlugStatus()
+	s.shellyCached = result
+	s.shellyCachedAt = time.Now()
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) readPlugStatus() map[string]any {
 	if s.shellyHost() == "" {
 		s.refreshShellyHost()
 	}
 	if s.shellyHost() == "" {
-		writeJSON(w, http.StatusOK, map[string]any{"configured": false})
-		return
+		return map[string]any{"configured": false}
 	}
 	info, err := s.shellyGet("/rpc/Shelly.GetDeviceInfo")
 	status, err2 := s.shellyGet("/rpc/Switch.GetStatus?id=0")
@@ -405,12 +536,11 @@ func (s *Server) handlePlugStatus(w http.ResponseWriter, r *http.Request) {
 		status, err2 = s.shellyGet("/rpc/Switch.GetStatus?id=0")
 	}
 	if err != nil || err2 != nil {
-		writeJSON(w, http.StatusOK, map[string]any{
+		return map[string]any{
 			"configured": true,
 			"error":      "unreachable",
 			"host":       s.shellyHost(),
-		})
-		return
+		}
 	}
 	on, _ := status["output"].(bool)
 	out := map[string]any{
@@ -430,7 +560,7 @@ func (s *Server) handlePlugStatus(w http.ResponseWriter, r *http.Request) {
 	if v, ok := status["voltage"].(float64); ok {
 		out["voltage"] = v
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out
 }
 
 func (s *Server) shellyGet(path string) (map[string]any, error) {
@@ -483,6 +613,9 @@ func (s *Server) plugAction(w http.ResponseWriter, r *http.Request, fn func() er
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	s.shellyCacheMu.Lock()
+	s.shellyCachedAt = time.Time{}
+	s.shellyCacheMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -490,7 +623,7 @@ func (s *Server) schedulesPath() string {
 	return filepath.Join(s.cfg.DataDir, "schedules.json")
 }
 
-func (s *Server) loadSchedules() (SchedulesFile, error) {
+func (s *Server) readSchedulesFile() (SchedulesFile, error) {
 	sf := SchedulesFile{
 		Schedules: []Schedule{},
 		Timezone:  s.cfg.Timezone,
@@ -515,6 +648,37 @@ func (s *Server) loadSchedules() (SchedulesFile, error) {
 	return sf, nil
 }
 
+func cloneSchedules(sf SchedulesFile) SchedulesFile {
+	out := sf
+	out.Schedules = append([]Schedule(nil), sf.Schedules...)
+	for i := range out.Schedules {
+		out.Schedules[i].Days = append([]int(nil), out.Schedules[i].Days...)
+	}
+	out.DayLabels = append([]string(nil), sf.DayLabels...)
+	return out
+}
+
+func (s *Server) initSchedules() error {
+	sf, err := s.readSchedulesFile()
+	if err != nil {
+		return err
+	}
+	s.schedulesMu.Lock()
+	s.schedules = cloneSchedules(sf)
+	s.schedulesMu.Unlock()
+	b, err := os.ReadFile(filepath.Join(s.cfg.DataDir, "schedule-fire-state.json"))
+	if err == nil {
+		_ = json.Unmarshal(b, &s.lastFire)
+	}
+	return nil
+}
+
+func (s *Server) loadSchedules() (SchedulesFile, error) {
+	s.schedulesMu.RLock()
+	defer s.schedulesMu.RUnlock()
+	return cloneSchedules(s.schedules), nil
+}
+
 func (s *Server) saveSchedules(sf SchedulesFile) error {
 	sf.Timezone = s.cfg.Timezone
 	sf.DayLabels = []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
@@ -522,7 +686,45 @@ func (s *Server) saveSchedules(sf SchedulesFile) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.schedulesPath(), b, 0o644)
+	if err := writeFileAtomic(s.schedulesPath(), b, 0o644); err != nil {
+		return err
+	}
+	s.schedulesMu.Lock()
+	s.schedules = cloneSchedules(sf)
+	s.schedulesMu.Unlock()
+	return nil
+}
+
+func writeFileAtomic(path string, b []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".homelab-hq-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
+func (s *Server) saveLastFire() {
+	b, err := json.Marshal(s.lastFire)
+	if err == nil {
+		_ = writeFileAtomic(filepath.Join(s.cfg.DataDir, "schedule-fire-state.json"), b, 0o644)
+	}
 }
 
 func (s *Server) handleWakeSchedules(w http.ResponseWriter, r *http.Request) {
@@ -541,7 +743,12 @@ func (s *Server) handleWakeSchedules(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		now := time.Now().In(s.loc).Format(time.RFC3339Nano)
-		payload.ID = uuid.NewString()
+		var idErr error
+		payload.ID, idErr = newID()
+		if idErr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "could not generate schedule id"})
+			return
+		}
 		payload.CreatedAt = now
 		payload.UpdatedAt = now
 		if payload.Days == nil {
@@ -684,7 +891,7 @@ func (s *Server) syncFromPrimary() error {
 		if r.StatusCode >= 400 {
 			return fmt.Errorf("primary %s: %s", name, r.Status)
 		}
-		if err := os.WriteFile(filepath.Join(s.cfg.DataDir, name), b, 0o644); err != nil {
+		if err := writeFileAtomic(filepath.Join(s.cfg.DataDir, name), b, 0o644); err != nil {
 			return err
 		}
 	}
@@ -791,7 +998,7 @@ func (s *Server) saveHidden(m map[string]any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(s.cfg.DataDir, "hidden.json"), b, 0o644)
+	return writeFileAtomic(filepath.Join(s.cfg.DataDir, "hidden.json"), b, 0o644)
 }
 
 func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
@@ -836,7 +1043,7 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	if err := os.WriteFile(filepath.Join(s.cfg.DataDir, "display-names.json"), nameBytes, 0o644); err != nil {
+	if err := writeFileAtomic(filepath.Join(s.cfg.DataDir, "display-names.json"), nameBytes, 0o644); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
@@ -861,7 +1068,7 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
+	if err := writeFileAtomic(path, out, 0o644); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
@@ -880,10 +1087,12 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) scheduleLoop() {
-	t := time.NewTicker(30 * time.Second)
+	next := time.Now().Truncate(time.Minute).Add(time.Minute).Add(250 * time.Millisecond)
+	t := time.NewTimer(time.Until(next))
 	defer t.Stop()
 	for range t.C {
 		s.tickSchedules()
+		t.Reset(time.Minute)
 	}
 }
 
@@ -960,6 +1169,7 @@ func (s *Server) tickSchedules() {
 		}
 		s.mu.Lock()
 		s.lastFire[sc.ID] = keyDay
+		s.saveLastFire()
 		s.mu.Unlock()
 	}
 }

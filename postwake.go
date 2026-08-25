@@ -44,18 +44,38 @@ func (s *Server) handleArrayStatus(w http.ResponseWriter, r *http.Request) {
 		workflow.State = "idle"
 		workflow.Message = "No dashboard array-start attempt is active"
 	}
-	online := s.probeUnraid()
+	online := s.probeUnraidCached(false)
 	arrayState := "Unavailable"
 	if online {
-		if fs, err := s.fsState(); err == nil && fs != "" {
-			arrayState = fs
-		} else if err != nil {
-			arrayState = "Services not ready"
-		}
+		arrayState = s.cachedArrayState()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"online": online, "array_state": arrayState, "workflow": workflow,
 	})
+}
+
+func (s *Server) cachedArrayState() string {
+	s.arrayCacheMu.Lock()
+	defer s.arrayCacheMu.Unlock()
+	if !s.arrayCachedAt.IsZero() && time.Since(s.arrayCachedAt) < time.Duration(s.cfg.ArrayCacheSeconds)*time.Second {
+		return s.arrayCached
+	}
+	state := "Services not ready"
+	if value, err := s.fsState(); err == nil && value != "" {
+		state = value
+	}
+	s.arrayCached = state
+	s.arrayCachedAt = time.Now()
+	return state
+}
+
+func (s *Server) invalidateStatusCaches() {
+	s.statusMu.Lock()
+	s.statusCachedAt = time.Time{}
+	s.statusMu.Unlock()
+	s.arrayCacheMu.Lock()
+	s.arrayCachedAt = time.Time{}
+	s.arrayCacheMu.Unlock()
 }
 
 const (

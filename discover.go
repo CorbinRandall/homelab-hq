@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -38,9 +39,14 @@ func (s *Server) sshRun(remoteCmd string) (int, string, string, error) {
 	if opts == "" {
 		opts = "-o BatchMode=yes -o ConnectTimeout=8"
 	}
-	full := fmt.Sprintf("ssh %s %s %q", opts, target, remoteCmd)
-	cmd := exec.Command("bash", "-lc", full)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	args := sshArgs(opts, target, remoteCmd)
+	cmd := exec.CommandContext(ctx, "ssh", args...)
 	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return 1, "", string(out), fmt.Errorf("ssh command timed out: %w", ctx.Err())
+	}
 	combined := string(out)
 	if err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
@@ -49,6 +55,11 @@ func (s *Server) sshRun(remoteCmd string) (int, string, string, error) {
 		return 1, "", combined, err
 	}
 	return 0, combined, "", nil
+}
+
+func sshArgs(opts, target, remoteCmd string) []string {
+	args := append([]string(nil), strings.Fields(opts)...)
+	return append(args, target, remoteCmd)
 }
 
 func (s *Server) refreshDiscover() error {
@@ -493,11 +504,7 @@ func (s *Server) writeAppsJSON(apps []discoveredApp, online bool, errMsg string,
 		return err
 	}
 	path := filepath.Join(s.cfg.DataDir, "apps.json")
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return writeFileAtomic(path, b, 0o644)
 }
 
 func (s *Server) sleepUnraid() error {
@@ -513,7 +520,7 @@ func (s *Server) sleepUnraid() error {
 		}
 		cmd = fmt.Sprintf("ssh %s %s /usr/local/emhttp/plugins/dynamix.s3.sleep/scripts/s3_sleep -S", opts, target)
 	}
-	c := exec.Command("bash", "-lc", cmd)
+	c := exec.Command("/bin/sh", "-c", cmd)
 	out, err := c.CombinedOutput()
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
@@ -529,7 +536,7 @@ func (s *Server) shutdownUnraid() error {
 	if strings.TrimSpace(s.cfg.ShutdownCmd) == "" {
 		return s.sleepUnraid()
 	}
-	c := exec.Command("bash", "-lc", s.cfg.ShutdownCmd)
+	c := exec.Command("/bin/sh", "-c", s.cfg.ShutdownCmd)
 	out, err := c.CombinedOutput()
 	if err != nil {
 		msg := strings.TrimSpace(string(out))

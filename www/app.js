@@ -3,7 +3,7 @@ let CONFIG = {
   hostIp: 'Unraid',
   unraidUrl: '',
   headerLinks: [],
-  pollIntervalMs: 15000,
+  pollIntervalMs: 30000,
 };
 
 const dot = document.getElementById('dot');
@@ -31,6 +31,8 @@ const footer = document.getElementById('footer');
 let lastOnline = null;
 let hidden = {};
 let wakeRefreshTimer = null;
+let workflowActive = false;
+let dashboardPollTimer = null;
 
 function esc(s) {
   return String(s)
@@ -49,7 +51,7 @@ async function loadPublicConfig() {
     hostIp: config.unraid_hostname || 'Unraid',
     unraidUrl: config.unraid_url || '',
     headerLinks: Array.isArray(config.header_links) ? config.header_links : [],
-    pollIntervalMs: Number(config.poll_interval_ms) || 15000,
+    pollIntervalMs: Number(config.poll_interval_ms) || 30000,
   };
   document.title = CONFIG.siteName;
   document.getElementById('siteTitle').textContent = CONFIG.siteName;
@@ -200,6 +202,7 @@ async function poll(force) {
 function applyArrayStatus(j) {
   const workflow = j.workflow || { state: 'idle', message: 'No dashboard start attempt is active' };
   const active = !['idle', 'succeeded', 'failed'].includes(workflow.state);
+  workflowActive = active;
   let state = workflow.state;
   const powerAction = (workflow.reason || '').split(':')[0];
   const isPowerOffWorkflow = powerAction === 'shutdown' || powerAction === 'sleep';
@@ -420,12 +423,22 @@ async function startDashboard() {
     footer.textContent = 'Dashboard configuration could not be loaded.';
   }
   loadData();
-  poll();
-  pollArrayStatus();
-  pollPlug();
-  setInterval(() => poll(false), CONFIG.pollIntervalMs);
-  setInterval(pollArrayStatus, 5000);
-  setInterval(pollPlug, CONFIG.pollIntervalMs);
+  runDashboardPoll();
 }
+
+async function runDashboardPoll() {
+  clearTimeout(dashboardPollTimer);
+  if (document.hidden) return;
+  await Promise.all([poll(false), pollArrayStatus(), pollPlug()]);
+  dashboardPollTimer = setTimeout(runDashboardPoll, workflowActive ? 3000 : CONFIG.pollIntervalMs);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    clearTimeout(dashboardPollTimer);
+  } else {
+    runDashboardPoll();
+  }
+});
 
 startDashboard();

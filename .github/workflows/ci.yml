@@ -30,3 +30,16 @@ jobs:
           context: .
           push: false
           tags: homelab-hq:test
+          load: true
+      - name: Runtime smoke test
+        run: |
+          mkdir -p smoke-data
+          docker run -d --name homelab-hq-smoke --network host \
+            -v "$PWD/config.example.json:/config/config.json:ro" \
+            -v "$PWD/smoke-data:/data" homelab-hq:test
+          for attempt in 1 2 3 4 5; do
+            curl --fail --silent http://127.0.0.1:8888/health && exit 0
+            sleep 1
+          done
+          docker logs homelab-hq-smoke
+          exit 1
