@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -86,6 +87,14 @@ func TestNewIDAndSSHArgs(t *testing.T) {
 		if args[i] != want[i] {
 			t.Fatalf("args=%q", args)
 		}
+	}
+	cmd := commandContext(context.Background(), "ssh -o BatchMode=yes root@example.test true")
+	if filepath.Base(cmd.Path) != "ssh" {
+		t.Fatalf("simple SSH command used shell: %q", cmd.Path)
+	}
+	shellCmd := commandContext(context.Background(), "ssh root@example.test 'echo one two'")
+	if shellCmd.Path != "/bin/sh" {
+		t.Fatalf("quoted command did not preserve shell parsing: %q", shellCmd.Path)
 	}
 }
 

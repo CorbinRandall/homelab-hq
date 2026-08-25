@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strings"
@@ -106,12 +107,14 @@ func (s *Server) afterPowerAction(action, reason string) {
 	// Run command delivery concurrently so progress is driven by the server's
 	// actual availability rather than by how quickly SSH notices the disconnect.
 	commandDone := make(chan error, 1)
+	commandCtx, cancelCommand := context.WithCancel(context.Background())
+	defer cancelCommand()
 	go func() {
 		if action == "shutdown" {
-			commandDone <- s.shutdownUnraid()
+			commandDone <- s.shutdownUnraidContext(commandCtx)
 			return
 		}
-		commandDone <- s.sleepUnraid()
+		commandDone <- s.sleepUnraidContext(commandCtx)
 	}()
 	commandWait := time.NewTimer(10 * time.Second)
 	commandPoll := time.NewTicker(time.Second)

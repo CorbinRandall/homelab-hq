@@ -508,6 +508,12 @@ func (s *Server) writeAppsJSON(apps []discoveredApp, online bool, errMsg string,
 }
 
 func (s *Server) sleepUnraid() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return s.sleepUnraidContext(ctx)
+}
+
+func (s *Server) sleepUnraidContext(ctx context.Context) error {
 	cmd := s.cfg.SleepCmd
 	if cmd == "" {
 		target := s.cfg.SSHTarget
@@ -520,7 +526,7 @@ func (s *Server) sleepUnraid() error {
 		}
 		cmd = fmt.Sprintf("ssh %s %s /usr/local/emhttp/plugins/dynamix.s3.sleep/scripts/s3_sleep -S", opts, target)
 	}
-	c := exec.Command("/bin/sh", "-c", cmd)
+	c := commandContext(ctx, cmd)
 	out, err := c.CombinedOutput()
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
@@ -533,10 +539,16 @@ func (s *Server) sleepUnraid() error {
 }
 
 func (s *Server) shutdownUnraid() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return s.shutdownUnraidContext(ctx)
+}
+
+func (s *Server) shutdownUnraidContext(ctx context.Context) error {
 	if strings.TrimSpace(s.cfg.ShutdownCmd) == "" {
-		return s.sleepUnraid()
+		return s.sleepUnraidContext(ctx)
 	}
-	c := exec.Command("/bin/sh", "-c", s.cfg.ShutdownCmd)
+	c := commandContext(ctx, s.cfg.ShutdownCmd)
 	out, err := c.CombinedOutput()
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
@@ -546,4 +558,14 @@ func (s *Server) shutdownUnraid() error {
 		return fmt.Errorf("%s", msg)
 	}
 	return nil
+}
+
+// Execute simple SSH configuration directly so context cancellation also
+// terminates the SSH client. Other legacy command strings retain shell syntax.
+func commandContext(ctx context.Context, command string) *exec.Cmd {
+	fields := strings.Fields(command)
+	if len(fields) > 0 && fields[0] == "ssh" && !strings.ContainsAny(command, "'\"\\|&;<>()$`") {
+		return exec.CommandContext(ctx, fields[0], fields[1:]...)
+	}
+	return exec.CommandContext(ctx, "/bin/sh", "-c", command)
 }
