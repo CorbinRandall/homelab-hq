@@ -1,5 +1,8 @@
 # Homelab HQ
 
+<img width="1117" height="558" alt="Screenshot 2026-08-26 at 2 20 29 PM" src="https://github.com/user-attachments/assets/07c6ef80-e73b-49db-b0ab-7b6f82884a97" />
+
+
 Homelab HQ is a lightweight dashboard for Unraid Docker applications. It discovers running containers over SSH, builds convenient application links, and provides optional Wake-on-LAN, array, sleep, shutdown, schedule, and Shelly smart-plug controls. Its small footprint should suit Raspberry Pi-class hardware, although Raspberry Pi deployment has not been tested.
 
 The application is a single Go binary with a static web interface. It is intended to run on an always-on device such as a small Linux host, VM, or Proxmox LXC. If it runs only on the Unraid machine, it cannot wake that machine after shutdown.
