@@ -35,6 +35,10 @@ func (s *Server) setArrayWorkflow(state, message, reason string, attempts int, c
 	} else {
 		s.arrayWorkflow.CompletedAt = ""
 	}
+	go s.appendAudit(PowerAuditEvent{
+		Action: reason, Phase: state, Result: workflowResult(state),
+		Detail: message, Attempts: attempts, Source: "workflow",
+	})
 }
 
 func (s *Server) handleArrayStatus(w http.ResponseWriter, r *http.Request) {

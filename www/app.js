@@ -27,6 +27,10 @@ const hiddenSection = document.getElementById('hiddenSection');
 const hiddenList = document.getElementById('hiddenList');
 const subline = document.getElementById('subline');
 const footer = document.getElementById('footer');
+const auditList = document.getElementById('auditList');
+const refreshAuditBtn = document.getElementById('refreshAuditBtn');
+const auditSection = document.getElementById('auditSection');
+const auditSummarySub = document.getElementById('auditSummarySub');
 
 let lastOnline = null;
 let hidden = {};
@@ -84,6 +88,39 @@ function formatUpdated(iso) {
     });
   } catch {
     return iso;
+  }
+}
+
+function auditLabel(value) {
+  return String(value || '').replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+async function loadPowerAudit() {
+  try {
+    const r = await fetch('/api/power-audit?limit=80', { cache: 'no-store' });
+    const j = await r.json();
+    const events = j.events || [];
+    auditSummarySub.textContent = events.length
+      ? `${events.length} recent events · click to expand`
+      : 'No events yet · click to expand';
+    if (!events.length) {
+      auditList.innerHTML = '<p class="empty">No recorded power activity yet.</p>';
+      return;
+    }
+    auditList.innerHTML = events.map((event) => {
+      const when = formatUpdated(event.timestamp);
+      const source = event.source_ip ? ` · ${esc(event.source_ip)}` : '';
+      const attempts = event.attempts ? ` · attempt ${event.attempts}` : '';
+      return `<div class="audit-row audit-${esc(event.result || 'info')}">
+        <span class="audit-time">${esc(when)}</span>
+        <span class="audit-action">${esc(auditLabel(event.action))}</span>
+        <span class="audit-phase">${esc(auditLabel(event.phase))}${attempts}</span>
+        <span class="audit-detail">${esc(event.detail || '')}${source}</span>
+      </div>`;
+    }).join('');
+  } catch {
+    auditSummarySub.textContent = 'History unavailable · click to retry';
+    auditList.innerHTML = '<p class="empty">Power history is temporarily unavailable.</p>';
   }
 }
 
@@ -415,6 +452,10 @@ startArrayBtn.addEventListener('click', () => ctl('start'));
 sleepBtn.addEventListener('click', () => ctl('sleep'));
 shutdownBtn.addEventListener('click', () => ctl('shutdown'));
 refreshBtn.addEventListener('click', refreshApps);
+refreshAuditBtn.addEventListener('click', loadPowerAudit);
+auditSection.addEventListener('toggle', () => {
+  if (auditSection.open) loadPowerAudit();
+});
 plugOnBtn.addEventListener('click', () => plugCtl('on'));
 plugOffBtn.addEventListener('click', () => plugCtl('off'));
 plugCycleBtn.addEventListener('click', () => plugCtl('cycle'));
@@ -426,6 +467,7 @@ async function startDashboard() {
     footer.textContent = 'Dashboard configuration could not be loaded.';
   }
   loadData();
+  loadPowerAudit();
   runDashboardPoll();
 }
 

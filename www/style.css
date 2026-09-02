@@ -218,6 +218,41 @@ footer {
 .wake-toggle input:checked + span::after { transform: translateX(17px); }
 .wake-empty { margin: 0.5rem 0 0; }
 
+.audit-section {
+  max-width: 1100px; margin: 0 auto 1.5rem;
+  background: #252830; border: 1px solid #3c4043; border-radius: 12px;
+  overflow: hidden;
+}
+.audit-summary {
+  min-height: 66px; padding: 1rem 1.25rem; display: flex; align-items: center;
+  justify-content: space-between; gap: 1rem; cursor: pointer; list-style: none;
+}
+.audit-summary::-webkit-details-marker { display: none; }
+.audit-summary-main { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+.audit-dot { background: #6d7683; box-shadow: 0 0 8px 1px rgba(109,118,131,.4); }
+.audit-summary-sub { margin-left: 0.55rem; color: #9aa0a6; font-size: 0.82rem; font-weight: 400; }
+.audit-chevron {
+  width: 10px; height: 10px; flex: 0 0 auto; border-right: 2px solid #9aa0a6;
+  border-bottom: 2px solid #9aa0a6; transform: rotate(45deg); transition: transform .18s ease;
+}
+.audit-section[open] .audit-chevron { transform: rotate(225deg); }
+.audit-section[open] .audit-summary { border-bottom: 1px solid #3c4043; }
+.audit-panel { padding: 1rem 1.25rem 1.25rem; }
+.audit-panel-head { margin-bottom: 0.8rem; }
+.audit-list { display: flex; flex-direction: column; gap: 0.45rem; }
+.audit-row {
+  display: grid; grid-template-columns: minmax(8rem, auto) minmax(7rem, auto) minmax(8rem, auto) 1fr;
+  gap: 0.7rem; align-items: center; padding: 0.55rem 0.7rem;
+  background: #1a1d24; border: 1px solid #3c4043; border-left: 3px solid #5f6368; border-radius: 7px;
+  font-size: 0.8rem;
+}
+.audit-success { border-left-color: #34a853; }
+.audit-failed { border-left-color: #ea4335; }
+.audit-progress { border-left-color: #fbbc04; }
+.audit-time, .audit-detail { color: #9aa0a6; }
+.audit-action { font-weight: 700; }
+.audit-phase { color: #c9cdd2; }
+
 .wake-dialog {
   width: min(92vw, 480px); padding: 0; color: #e8eaed;
   background: #252830; border: 1px solid #5f6368; border-radius: 12px;
@@ -252,4 +287,7 @@ footer {
   .wake-days { grid-column: 2 / 4; }
   .wake-row > .wake-label-tag:last-of-type { grid-column: 2 / 4; }
   .wake-actions { grid-column: 2 / 4; justify-content: flex-start; }
+  .audit-row { grid-template-columns: 1fr 1fr; gap: 0.25rem 0.7rem; }
+  .audit-detail { grid-column: 1 / -1; }
+  .audit-summary-sub { display: block; margin: 0.15rem 0 0; }
 }

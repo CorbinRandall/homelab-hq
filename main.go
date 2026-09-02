@@ -105,6 +105,7 @@ type Server struct {
 	shellyScanAfter time.Time
 	schedulesMu     sync.RWMutex
 	schedules       SchedulesFile
+	auditMu         sync.Mutex
 	probeOverride   func() bool
 }
 
@@ -152,6 +153,7 @@ func main() {
 	mux.HandleFunc("/api/wake-schedules/", s.handleWakeScheduleID)
 	mux.HandleFunc("/api/refresh", s.handleRefresh)
 	mux.HandleFunc("/api/config", s.handlePublicConfig)
+	mux.HandleFunc("/api/power-audit", s.handlePowerAudit)
 	mux.HandleFunc("/hide", s.handleHide)
 	mux.HandleFunc("/unhide", s.handleUnhide)
 	mux.HandleFunc("/rename", s.handleRename)
@@ -309,9 +311,11 @@ func (s *Server) handleUnraidWake(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.sendWOL(); err != nil {
+		s.auditRequest(r, "turn_on", "failed", err.Error())
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	s.auditRequest(r, "turn_on", "accepted", "Wake-on-LAN command sent; array-start workflow queued")
 	s.invalidateStatusCaches()
 	s.afterWake("button")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -375,6 +379,7 @@ func (s *Server) handleUnraidStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.invalidateStatusCaches()
+	s.auditRequest(r, "start_array", "accepted", "Array-start workflow queued")
 	go s.afterWake("start-array")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -404,6 +409,7 @@ func (s *Server) handleUnraidPower(w http.ResponseWriter, r *http.Request, actio
 				} else {
 					_, _ = w.Write(body)
 				}
+				s.auditRequest(r, action, "proxied", "Request forwarded to primary hub")
 				return
 			}
 		}
@@ -411,8 +417,10 @@ func (s *Server) handleUnraidPower(w http.ResponseWriter, r *http.Request, actio
 			"ok":    false,
 			"error": "sleep unavailable (primary hub unreachable); wake still works locally",
 		})
+		s.auditRequest(r, action, "failed", "Primary hub unreachable")
 		return
 	}
+	s.auditRequest(r, action, "accepted", "Power workflow queued")
 	go s.afterPowerAction(action, "button")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "action": action})
 }

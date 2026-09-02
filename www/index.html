@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="Homelab HQ">
   <link rel="manifest" href="/manifest.json">
   <title>Homelab HQ</title>
-  <link rel="stylesheet" href="/style.css?v=layout14">
+  <link rel="stylesheet" href="/style.css?v=layout15">
 </head>
 <body>
   <header>
@@ -68,6 +68,23 @@
     <p class="wake-empty empty" id="wakeEmpty" hidden>No schedules yet — add Turn on, Sleep, or Shutdown above.</p>
   </section>
 
+  <details class="audit-section" id="auditSection">
+    <summary class="audit-summary">
+      <span class="audit-summary-main">
+        <span class="dot audit-dot"></span>
+        <span><strong>Recent power activity</strong><span class="audit-summary-sub" id="auditSummarySub">Loading history…</span></span>
+      </span>
+      <span class="audit-chevron" aria-hidden="true"></span>
+    </summary>
+    <div class="audit-panel">
+      <div class="section-head audit-panel-head">
+        <p class="section-sub">Persistent history of power buttons, schedules, retries, and results.</p>
+        <button type="button" id="refreshAuditBtn" class="ctl-btn ctl-refresh">Refresh log</button>
+      </div>
+      <div id="auditList" class="audit-list"><p class="empty">Loading power history…</p></div>
+    </div>
+  </details>
+
   <div class="grid" id="grid"></div>
   <section class="hidden-section" id="hiddenSection" hidden>
     <h2>Hidden apps</h2>
@@ -111,7 +128,7 @@
     </form>
   </dialog>
 
-  <script src="/app.js?v=power18"></script>
+  <script src="/app.js?v=power19"></script>
   <script src="/wake-schedules.js?v=layout13"></script>
 </body>
 </html>
